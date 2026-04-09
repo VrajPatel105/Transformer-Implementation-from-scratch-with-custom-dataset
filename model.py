@@ -138,17 +138,15 @@ class LayerNorm(nn.Module):
         return self.alpha * ((x - mean) / (std + self.eps)) + self.bias
 
 
-
-
-
 # residual class
-class Residuals(nn.Module):
+class ResidualConnections(nn.Module):
 
-    def __init__(self):
+    def __init__(self, d_model):
         super().__init__()
+        self.d_model = d_model
+        self.norm = LayerNorm(d_model)
 
 
-    def forward(self):
-
-        pass
+    def forward(self,x, sublayer):
+        return x + sublayer(self.norm(x))
 
