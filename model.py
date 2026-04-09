@@ -20,13 +20,15 @@ import math
 # Embeddings class
 class Embedding(nn.Module):
 
-    def __init__(self, x):
+    def __init__(self, d_model, vocab_size):
         super().__init__()
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+        self.embedding = nn.Embedding(vocab_size, self.d_model)
+        
+    def forward(self, x):
 
-
-    def forward(self):
-
-        pass
+        return self.embedding(x) * math.sqrt(self.d_model) 
 
 
 
@@ -123,13 +125,17 @@ class FeedForward(nn.Module):
 # LayerNorm class
 class LayerNorm(nn.Module):
 
-    def __init__(self):
+    def __init__(self, eps = 0.00001):
         super().__init__()
+        self.eps = eps 
+        self.alpha = nn.Parameter(torch.ones(1))
+        self.bias = nn.Parameter(torch.zeros(1))
 
 
-    def forward(self):
-
-        pass
+    def forward(self,x):
+        mean = x.mean(dim=-1, keepdim=True)
+        std = x.std(dim=-1, keepdim=True)
+        return self.alpha * ((x - mean) / (std + self.eps)) + self.bias
 
 
 
