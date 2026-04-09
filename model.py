@@ -60,33 +60,68 @@ class PositionalEmbedding(nn.Module):
 # Multi Head attention class
 class MultiHeadAttention(nn.Module):
 
-    def __init__(self):
+    def __init__(self, batch_size, seq_len, d_model, head_dim):
         super().__init__()
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.d_model = d_model
+        self.head_dim = head_dim
+        if (d_model % head_dim != 0):
+            raise ValueError("The head dimensions does not fit with d_model")
+        self.d_k = d_model // head_dim
+        self.W_q = nn.Linear(d_model, d_model)
+        self.W_k = nn.Linear(d_model, d_model)
+        self.W_v = nn.Linear(d_model, d_model)
+        self.W_o = nn.Linear(d_model, d_model)
+
+    @staticmethod
+    def attention(q,k,v,d_k,mask):
+        
+        attention_scores = ((q @ k.transpose(-2,-1) ) / math.sqrt(d_k))
+
+        if mask is not None:
+            attention_scores.masked_fill_(mask == 0, -1e9)
+        
+        attention_scores = torch.softmax(attention_scores, dim=-1)
+
+        return attention_scores @ v  
 
 
-    def forward(self):
+    def forward(self, x, q, k, v):
+        self.q = self.W_q(q) # -> q @ W_q
+        self.k = self.W_k(k) # -> k @ W_k
+        self.v = self.W_v(v) # -> v @ W_v
+        # so till now the shape is batch_size, seq_len, d_model for all q,k,v
+        # now we need to convert to another tensor shape which is :
+        # batch_size,seq_len,d_model => batch_size,seq_len, head_dim, d_k -> batch_size, head_dim, seq_len,d_k  
+        self.q = self.q.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
+        self.k = self.k.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
+        self.v = self.v.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
 
-        pass
+        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=False)
+        x = self.W_o(self.attention_scores.transpose(1, 2).contiguous().view(self.batch_size, self.seq_len, self.d_model))
+        # summate all here and return 
 
-
+        return x 
 
 
 # Feed forward class
 class FeedForward(nn.Module):
 
-    def __init__(self):
+    def __init__(self, d_model):
         super().__init__()
+        self.d_model = d_model
+        self.linear1 = nn.Linear(d_model, d_model * 4)
+        self.relu = nn.ReLU()
+        self.linear2 = nn.Linear(d_model * 4 ,d_model)
+
+    def forward(self,x):
+        return self.linear2(self.relu(self.linear1(x)))
 
 
-    def forward(self):
 
-        pass
-
-
-
-
-# add and norm class
-class AddNorm(nn.Module):
+# LayerNorm class
+class LayerNorm(nn.Module):
 
     def __init__(self):
         super().__init__()
