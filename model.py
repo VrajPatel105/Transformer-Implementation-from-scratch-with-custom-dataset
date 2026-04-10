@@ -88,15 +88,13 @@ class MultiHeadAttention(nn.Module):
         self.v = self.W_v(v) # -> v @ W_v
 
         self.batch_size, self.seq_len, _ = q.shape  # Extract from input!
-        head_dim = self.d_model // self.num_heads
-        self.d_k = head_dim
-
+        
         # so till now the shape is batch_size, seq_len, d_model for all q,k,v
         # now we need to convert to another tensor shape which is :
-        # batch_size,seq_len,d_model => batch_size,seq_len, head_dim, d_k -> batch_size, head_dim, seq_len,d_k  
-        self.q = self.q.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
-        self.k = self.k.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
-        self.v = self.v.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
+        # batch_size,seq_len,d_model => batch_size,seq_len, num_heads, d_k -> batch_size, num_heads, seq_len,d_k  
+        self.q = self.q.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
+        self.k = self.k.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
+        self.v = self.v.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
 
         self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=mask)
         x = self.W_o(self.attention_scores.transpose(1, 2).contiguous().view(self.batch_size, self.seq_len, self.d_model))
@@ -312,7 +310,6 @@ def build_transformer(configurations):
     N = configurations['num_blocks']
     src_max_seq_len = configurations['src_max_seq_len']
     tgt_max_seq_len = configurations['tgt_max_seq_len']
-    batch_size = configurations['batch_size']
     src_vocab_size = configurations['src_vocab_size']
     tgt_vocab_size = configurations['tgt_vocab_size']
 

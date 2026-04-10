@@ -5,7 +5,6 @@ configurations = {
     'num_blocks' : 6,
     'src_max_seq_len' : 323,
     'tgt_max_seq_len' : 123,
-    'batch_size' : 32,
     'src_vocab_size' : 10000,
     'tgt_vocab_size' : 8000
     
