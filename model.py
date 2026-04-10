@@ -31,8 +31,6 @@ class Embedding(nn.Module):
         return self.embedding(x) * math.sqrt(self.d_model) 
 
 
-
-
 # Positional Encoding class
 class PositionalEmbedding(nn.Module):
 
@@ -62,15 +60,14 @@ class PositionalEmbedding(nn.Module):
 # Multi Head attention class
 class MultiHeadAttention(nn.Module):
 
-    def __init__(self, batch_size, seq_len, d_model, head_dim):
+    def __init__(self, batch_size, seq_len, d_model, num_heads):
         super().__init__()
         self.batch_size = batch_size
         self.seq_len = seq_len
         self.d_model = d_model
-        self.head_dim = head_dim
-        if (d_model % head_dim != 0):
-            raise ValueError("The head dimensions does not fit with d_model")
-        self.d_k = d_model // head_dim
+        self.num_heads = num_heads
+        assert d_model % num_heads == 0
+        self.d_k = d_model // num_heads
         self.W_q = nn.Linear(d_model, d_model)
         self.W_k = nn.Linear(d_model, d_model)
         self.W_v = nn.Linear(d_model, d_model)
@@ -82,25 +79,31 @@ class MultiHeadAttention(nn.Module):
         attention_scores = ((q @ k.transpose(-2,-1) ) / math.sqrt(d_k))
 
         if mask is not None:
-            attention_scores.masked_fill_(mask == 0, -1e9)
+            mask_bool = (mask == 0)
+            attention_scores.masked_fill_(mask_bool == 0, -1e9)
         
         attention_scores = torch.softmax(attention_scores, dim=-1)
 
         return attention_scores @ v  
 
 
-    def forward(self, x, q, k, v):
+    def forward(self, x, q, k, v, mask):
         self.q = self.W_q(q) # -> q @ W_q
         self.k = self.W_k(k) # -> k @ W_k
         self.v = self.W_v(v) # -> v @ W_v
+
+        self.batch_size, self.seq_len, _ = q.shape  # Extract from input!
+        head_dim = self.d_model // self.num_heads
+        self.d_k = head_dim
+
         # so till now the shape is batch_size, seq_len, d_model for all q,k,v
         # now we need to convert to another tensor shape which is :
         # batch_size,seq_len,d_model => batch_size,seq_len, head_dim, d_k -> batch_size, head_dim, seq_len,d_k  
-        self.q = self.q.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
-        self.k = self.k.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
-        self.v = self.v.view(self.batch_size, self.head_dim, self.seq_len, self.d_k).transpose(1,2)
+        self.q = self.q.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
+        self.k = self.k.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
+        self.v = self.v.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
 
-        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=False)
+        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=None)
         x = self.W_o(self.attention_scores.transpose(1, 2).contiguous().view(self.batch_size, self.seq_len, self.d_model))
         # summate all here and return 
 
@@ -125,11 +128,11 @@ class FeedForward(nn.Module):
 # LayerNorm class
 class LayerNorm(nn.Module):
 
-    def __init__(self, eps = 0.00001):
+    def __init__(self, d_model, eps = 0.00001):
         super().__init__()
         self.eps = eps 
-        self.alpha = nn.Parameter(torch.ones(1))
-        self.bias = nn.Parameter(torch.zeros(1))
+        self.alpha = nn.Parameter(torch.ones(d_model))
+        self.bias = nn.Parameter(torch.zeros(d_model))
 
 
     def forward(self,x):
@@ -148,5 +151,47 @@ class ResidualConnections(nn.Module):
 
 
     def forward(self,x, sublayer):
-        return x + sublayer(self.norm(x))
+      x = x + sublayer
+      return self.norm(x)
 
+# Encoder class
+'''
+What we have to do for encoder class:
+get the tensor x that is already positional encoded.
+take the tensor x and have it pass through the multiheadattention block
+then add the output from multiheadattention block and the initial data x which is obtained by the residualconnections block
+and then apply layer norm on this.
+now we have x tensor
+then apply FNN layer  -> x tensor to x_tensor
+then again apply add & norm by residual connections and layernorm.
+Now we have our final tensor x ready.
+'''
+
+class Encoder(nn.Module):
+    def __init__(self, multi_head_attention: MultiHeadAttention, feed_forward: FeedForward, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.multi_head_attention = multi_head_attention
+        self.residual_connection = nn.ModuleList([ResidualConnections(self.d_model) for _ in range(2)])
+        self.feed_forward = feed_forward
+
+    def forward(self,x, src_mask):
+        sub_layer = self.multi_head_attention(x,x,x,src_mask) # x q k v
+        x = self.residual_connection[0](x, sub_layer)
+        sub_layer = self.feed_forward(x)
+        x = self.residual_connection[1](x, sub_layer)
+
+        # we can also write the above implementation as this : 
+        #   x = self.residual_connection[0](x, lambda x: self.multi_head_attention(x, x, x, src_mask))
+        #   x = self.residual_connection[1](x, self.feed_forward)
+
+        return x
+
+
+# Decoder Class
+
+
+
+
+
+# Combined Transformer class
