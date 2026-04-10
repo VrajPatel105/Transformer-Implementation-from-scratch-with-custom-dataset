@@ -32,7 +32,7 @@ class Embedding(nn.Module):
 
 
 # Positional Encoding class
-class PositionalEmbedding(nn.Module):
+class PositionalEncoding(nn.Module):
 
     def __init__(self, d_model, max_seq_len):
         super().__init__()
@@ -241,16 +241,64 @@ class ProjectionLayer(nn.Module):
     def forward(self,x):
 
         return torch.log_softmax(self.linear_layer(x), dim=-1)
+    #The reason is that during training you'd use `nn.NLLLoss` (negative log likelihood) which expects log probabilities as input,
+    # and numerically it's more stable than raw softmax followed by log. If you use `nn.CrossEntropyLoss` instead, 
+    # skip the softmax entirely because CrossEntropyLoss applies it internally.
 
 # Combined Transformer class
+'''Here's my previously written transfromer class below'''
+# class Transformer(nn.Module):
+
+#     def __init__(self, embeddings, pe, encoder_blocks: nn.ModuleList, decoder_blocks: nn.ModuleList, projection_layer):
+#         super().__init__()
+#         self.embeddings = embeddings
+#         self.pe = pe
+#         self.encoder_blocks = encoder_blocks
+#         self.decoder_blocks = decoder_blocks
+#         self.projection_layer = projection_layer
+    
+#     def forward(self,src_data, src_vocab_size, tgt_data, tgt_vocab_size, src_mask, tgt_mask, d_model):
+        
+#         src_embeddings = Embedding(src_vocab_size, d_model)  # language 1 vocab
+#         tgt_embeddings = Embedding(tgt_vocab_size, d_model)  # Language 2 vocab
+
+#         src_pe_embeddings = self.pe(src_embeddings)
+#         tgt_pe_embeddings = self.pe(tgt_embeddings)
+
+
+#         for block in self.encoder_blocks:
+#             src_pe_embeddings =  block(src_pe_embeddings, src_mask)
+#         encoder_output = src_pe_embeddings
+
+#         for block in self.decoder_blocks:
+#             tgt_pe_embeddings = block(tgt_pe_embeddings, encoder_output, src_mask, tgt_mask)
+#         decoder_output = tgt_pe_embeddings
+
+#         return self.projection_layer(decoder_output) # we return the logits directly to the loss function
+
+# final transformer class
 
 class Transformer(nn.Module):
 
-    def __init__(self):
+    def __init__(self, src_embed: Embedding, tgt_embed: Embedding, pe: PositionalEncoding, 
+                 encoder_blocks: nn.ModuleList, decoder_blocks: nn.ModuleList, 
+                 projection_layer: ProjectionLayer):
         super().__init__()
-
+        self.src_embed = src_embed
+        self.tgt_embed = tgt_embed
+        self.pe = pe
+        self.encoder_blocks = encoder_blocks
+        self.decoder_blocks = decoder_blocks
+        self.projection_layer = projection_layer
     
-    def forward(self,x):
+    def forward(self, src, tgt, src_mask, tgt_mask):
+        src = self.pe(self.src_embed(src))
+        tgt = self.pe(self.tgt_embed(tgt))
+
+        for block in self.encoder_blocks:
+            src = block(src, src_mask)
         
+        for block in self.decoder_blocks:
+            tgt = block(tgt, src, src_mask, tgt_mask)
         
-        return x
+        return self.projection_layer(tgt)
