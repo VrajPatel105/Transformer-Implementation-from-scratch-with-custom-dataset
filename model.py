@@ -79,15 +79,14 @@ class MultiHeadAttention(nn.Module):
         attention_scores = ((q @ k.transpose(-2,-1) ) / math.sqrt(d_k))
 
         if mask is not None:
-            mask_bool = (mask == 0)
-            attention_scores.masked_fill_(mask_bool == 0, -1e9)
+            attention_scores.masked_fill_(mask == 0, -1e9)
         
         attention_scores = torch.softmax(attention_scores, dim=-1)
 
         return attention_scores @ v  
 
 
-    def forward(self, x, q, k, v, mask):
+    def forward(self, q, k, v, mask):
         self.q = self.W_q(q) # -> q @ W_q
         self.k = self.W_k(k) # -> k @ W_k
         self.v = self.W_v(v) # -> v @ W_v
@@ -103,7 +102,7 @@ class MultiHeadAttention(nn.Module):
         self.k = self.k.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
         self.v = self.v.view(self.batch_size, self.num_heads, self.seq_len, self.d_k).transpose(1,2)
 
-        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=None)
+        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=mask)
         x = self.W_o(self.attention_scores.transpose(1, 2).contiguous().view(self.batch_size, self.seq_len, self.d_model))
         # summate all here and return 
 
@@ -190,8 +189,47 @@ class Encoder(nn.Module):
 
 # Decoder Class
 
+'''
+We have two types of mask used here :
+1. Padding mask (src_mask) : this is used to ignore the padding tokens in input sentences.  
+    Because not all of the sentences are the same length, we need to add padding tokens based on the max_seq_len
+    So, when calculating the attention, the padding tokens are ignored
 
+# 1 = real token, 0 = padding
+src_mask = [1, 1, 0, 0]
 
+Then in attention, wherever mask is 0, you set the score to `-inf`. After softmax, `e^(-inf) = 0`, so those positions get zero attention weight. They're completely ignored.
+
+'''
+'''
+The second type of mask is : 
+2. Casual mask (tgt_mask): this is done during training when the decoder initial attention block is able to see all the future tokens in a sequence, we have to stop it.
+    So we simply add a mask that makes those values infinity and turns them to 0 with softmax applied
+
+    That's `torch.tril` Function used for the lower triangular. 
+    Wherever it's 0, set to `-inf` before softmax. Same exact mechanism as padding mask, different shape and purpose.
+
+'''
+class Decoder(nn.Module):
+
+    def __init__(self, masked_attention : MultiHeadAttention, cross_attention: MultiHeadAttention, feed_forward: FeedForward, d_model):
+        super().__init__()
+        self.d_model = d_model
+        self.masked_attention = masked_attention
+        self.cross_attention = cross_attention
+        self.residual_connection = nn.ModuleList([ResidualConnections(self.d_model) for _ in range(3)])
+        self.feed_forward = feed_forward
+
+    def forward(self,x, enc_output, src_mask, tgt_mask):
+        sub_layer = self.masked_attention(x,x,x,tgt_mask) 
+        x = self.residual_connection[0](x, sub_layer)
+        sub_layer = self.cross_attention(x, enc_output, enc_output, src_mask) 
+        x = self.residual_connection[1](x, sub_layer)
+        sub_layer = self.feed_forward(x)
+        x = self.residual_connection[2](x, sub_layer)
+
+        return x
 
 
 # Combined Transformer class
+
