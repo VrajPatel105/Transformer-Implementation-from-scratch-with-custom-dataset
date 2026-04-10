@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import math
+from config import configurations
 
 # Implementation pipeline: 
 # Embedding 
@@ -12,9 +13,6 @@ import math
 # stack into Encoder layer
 #  Decoder (with cross-attention)
 #  final Linear + Softmax.
-
-
-
 
 
 # Embeddings class
@@ -60,10 +58,8 @@ class PositionalEncoding(nn.Module):
 # Multi Head attention class
 class MultiHeadAttention(nn.Module):
 
-    def __init__(self, batch_size, seq_len, d_model, num_heads):
+    def __init__(self, d_model, num_heads):
         super().__init__()
-        self.batch_size = batch_size
-        self.seq_len = seq_len
         self.d_model = d_model
         self.num_heads = num_heads
         assert d_model % num_heads == 0
@@ -280,20 +276,21 @@ class ProjectionLayer(nn.Module):
 
 class Transformer(nn.Module):
 
-    def __init__(self, src_embed: Embedding, tgt_embed: Embedding, pe: PositionalEncoding, 
-                 encoder_blocks: nn.ModuleList, decoder_blocks: nn.ModuleList, 
+    def __init__(self, src_embed: Embedding, tgt_embed: Embedding, src_pe: PositionalEncoding, 
+                 tgt_pe : PositionalEncoding, encoder_blocks: nn.ModuleList, decoder_blocks: nn.ModuleList, 
                  projection_layer: ProjectionLayer):
         super().__init__()
         self.src_embed = src_embed
         self.tgt_embed = tgt_embed
-        self.pe = pe
+        self.src_pe = src_pe
+        self.tgt_pe = tgt_pe
         self.encoder_blocks = encoder_blocks
         self.decoder_blocks = decoder_blocks
         self.projection_layer = projection_layer
     
     def forward(self, src, tgt, src_mask, tgt_mask):
-        src = self.pe(self.src_embed(src))
-        tgt = self.pe(self.tgt_embed(tgt))
+        src = self.src_pe(self.src_embed(src))
+        tgt = self.tgt_pe(self.tgt_embed(tgt))
 
         for block in self.encoder_blocks:
             src = block(src, src_mask)
@@ -302,3 +299,43 @@ class Transformer(nn.Module):
             tgt = block(tgt, src, src_mask, tgt_mask)
         
         return self.projection_layer(tgt)
+    
+
+# Now we have all these classes built but nothing that assembles them. So, we will make a `build_transformer` Function. It is just a regular 
+# Python function that takes configuration parameters like `d_model`, `num_heads`, `num_blocks`, `vocab_size` 
+# and creates one instance of every class you've built, wires them together, and returns a ready-to-use Transformer object.
+
+def build_transformer(configurations):
+# this function needs to have objects of classes: embeddings, PE, encoder_blocks, decoder_blocks and projection_Layer
+    d_model = configurations['d_model']
+    num_heads = configurations['num_heads']
+    N = configurations['num_blocks']
+    src_max_seq_len = configurations['src_max_seq_len']
+    tgt_max_seq_len = configurations['tgt_max_seq_len']
+    batch_size = configurations['batch_size']
+    src_vocab_size = configurations['src_vocab_size']
+    tgt_vocab_size = configurations['tgt_vocab_size']
+
+    # embeddings 
+    src_embed = Embedding(d_model, src_vocab_size)
+    tgt_embed = Embedding(d_model, tgt_vocab_size)
+
+    # positional encoding 
+    src_pe = PositionalEncoding(d_model, src_max_seq_len)
+    tgt_pe = PositionalEncoding(d_model, tgt_max_seq_len)
+
+    # Encoder blocks -> needs a modulelist as parameters
+    encoder_block_mdlist = nn.ModuleList([
+        Encoder(MultiHeadAttention(d_model, num_heads), FeedForward(d_model), d_model)
+    for _ in range(N)] )
+    
+    decoder_block_mdlist = nn.ModuleList([
+        Decoder(MultiHeadAttention(d_model, num_heads),MultiHeadAttention(d_model, num_heads), FeedForward(d_model), d_model)
+    for _ in range(N)] )
+    
+    projection_layer = ProjectionLayer(d_model, tgt_vocab_size)
+
+    transformer = Transformer(src_embed, tgt_embed, src_pe, tgt_pe, 
+                              encoder_block_mdlist, decoder_block_mdlist, projection_layer)
+    
+    return transformer
