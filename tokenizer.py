@@ -1,5 +1,4 @@
 import re 
-
 class Tokenizer():
 
   PAD_ID = 0
@@ -56,4 +55,3 @@ class Tokenizer():
 
   def vocab_size(self):
     return len(self.word2idx)
-
