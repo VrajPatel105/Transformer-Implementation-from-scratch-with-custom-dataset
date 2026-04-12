@@ -13,3 +13,4 @@ def load_data(path):
   data = pd.read_csv(path, sep='\t', header=None, names=custom_cols, nrows=640, encoding='utf-8')
   data.drop(columns=['col1', 'col2'], inplace=True)
   return data['english_sentence'].tolist(), data['hindi_sentence'].tolist()
+
