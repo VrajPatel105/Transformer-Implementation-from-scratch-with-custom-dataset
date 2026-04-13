@@ -2,6 +2,8 @@ import torch
 import torch.nn as nn
 import pandas as pd
 from torch.utils.data import Dataset, DataLoader, random_split
+from model import build_transformer
+import torch.optim as optim
 
 from tokenizer import Tokenizer
 
@@ -99,6 +101,94 @@ train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], 
 train_loader = DataLoader(train_dataset, batch_size=configurations['batch_size'], shuffle=True)
 val_loader = DataLoader(val_dataset, batch_size=configurations['batch_size'], shuffle=False)
 
-print(len(train_dataset), len(val_dataset))
-batch = next(iter(train_loader))
-print(batch["encoder_input"].shape, batch["decoder_input"].shape, batch["label"].shape)
+# print(len(train_dataset), len(val_dataset))
+# batch = next(iter(train_loader))
+# print(batch["encoder_input"].shape, batch["decoder_input"].shape, batch["label"].shape)
+
+# instantiate the model 
+model = build_transformer(configurations)
+# loss function
+# Why de_tok.PAD_ID? The label is always German, so PAD_ID comes from the German tokenizer. In your case both are 0, but principled.
+criterion = nn.CrossEntropyLoss(ignore_index=de_tok.PAD_ID)
+# optimizer -> adam
+optimizer = optim.Adam(model.parameters(), lr=configurations['learning_rate'])
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+model = model.to(device)
+
+# training loop
+# for batch in train_loader:
+#     1. Move batch tensors to GPU
+#     2. Grab encoder_input, decoder_input, label from the dict
+#     3. Build the two masks (see below)
+#     4. Forward pass through model → logits, shape (B, T, vocab_size)
+#     5. Reshape logits and label so cross-entropy accepts them
+#     6. Compute loss
+#     7. optimizer.zero_grad()
+#     8. loss.backward()
+#     9. optimizer.step()
+#     10. Accumulate loss for reporting
+# Then wrap all of that in an outer for epoch in range(num_epochs): loop.
+
+def make_masks(encoder_input, decoder_input, pad_id, device):
+  
+  tgt_len = decoder_input.size(1)
+  src_mask = (encoder_input != pad_id).unsqueeze(1).unsqueeze(1)
+  tgt_pad_mask = (decoder_input != pad_id).unsqueeze(1).unsqueeze(1)
+  causal_mask = torch.tril(torch.ones(tgt_len, tgt_len, device=device)).bool()
+  tgt_mask = (tgt_pad_mask & causal_mask).int()
+
+  return src_mask.int(), tgt_mask
+
+
+def evaluate(model, loader, criterion, device, pad_id):
+    model.eval()
+    total_loss = 0
+    with torch.no_grad():
+        for batch in loader:
+            encoder_input = batch["encoder_input"].to(device)
+            decoder_input = batch["decoder_input"].to(device)
+            label = batch["label"].to(device)
+
+            src_mask, tgt_mask = make_masks(encoder_input, decoder_input, pad_id, device)
+            
+              # 3. forward pass
+            output = model(encoder_input, decoder_input, src_mask, tgt_mask)
+            
+            output = output.view(-1, de_tok.vocab_size())   # (B*T, vocab_size)
+            label  = label.view(-1)                         # (B*T,)
+            loss = criterion(output, label)
+            total_loss += loss.item()
+
+    return total_loss / len(loader)
+
+
+for epoch in range(configurations['epochs']):
+  
+  model.train()   # puts model in training mode (affects dropout, batchnorm)
+  total_loss = 0
+  for batch in train_loader:
+    encoder_input = batch["encoder_input"].to(device)
+    decoder_input = batch["decoder_input"].to(device)
+    label = batch["label"].to(device)
+
+    src_mask, tgt_mask = make_masks(encoder_input, decoder_input, eng_tok.PAD_ID, device)
+    
+    output = model(encoder_input, decoder_input, src_mask, tgt_mask)
+    
+    output = output.view(-1, de_tok.vocab_size())   # (B*T, vocab_size)
+    label  = label.view(-1)                # (B*T,)
+    loss = criterion(output, label)
+    # 5. zero_grad, backward, step
+    optimizer.zero_grad()
+
+    loss.backward()
+
+    optimizer.step()
+
+    total_loss = total_loss + loss.item()
+    
+  train_loss = total_loss / len(train_loader)
+  val_loss = evaluate(model, val_loader, criterion, device, eng_tok.PAD_ID)
+  
+  print(f"epoch {epoch+1:02d} | train {train_loss:.4f} | val {val_loss:.4f}")
