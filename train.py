@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import pandas as pd
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset, DataLoader, random_split
 
 from tokenizer import Tokenizer
 
@@ -18,12 +18,7 @@ def load_data(path):
   return data['english_sentence'].tolist(), data['german_sentence'].tolist()
 
 
-eng, de = load_data(path)
-eng_tok = Tokenizer()
-eng_tok.build_vocab(eng)
 
-de_tok = Tokenizer()
-de_tok.build_vocab(de)
 
 class TranslationDataset(Dataset):
 
@@ -85,3 +80,25 @@ class TranslationDataset(Dataset):
 # tensor([2, 4, 5, 6, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 # tensor([4, 5, 6, 7, 3, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
 # torch.Size([30])
+
+eng, de = load_data(path)
+eng_tok = Tokenizer()
+eng_tok.build_vocab(eng)
+
+de_tok = Tokenizer()
+de_tok.build_vocab(de)
+
+max_len = configurations['max_len'] # 68 -> print(max(len(s.split()) for s in eng))
+
+full_dataset = TranslationDataset(eng, de, eng_tok, de_tok, max_len)
+val_size = int(0.1 * len(full_dataset))
+train_size = len(full_dataset) - val_size
+
+
+train_dataset, val_dataset = random_split(full_dataset, [train_size, val_size], generator=torch.Generator().manual_seed(42))
+train_loader = DataLoader(train_dataset, batch_size=configurations['batch_size'], shuffle=True)
+val_loader = DataLoader(val_dataset, batch_size=configurations['batch_size'], shuffle=False)
+
+print(len(train_dataset), len(val_dataset))
+batch = next(iter(train_loader))
+print(batch["encoder_input"].shape, batch["decoder_input"].shape, batch["label"].shape)

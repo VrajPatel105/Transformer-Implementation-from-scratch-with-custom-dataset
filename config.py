@@ -7,5 +7,7 @@ configurations = {
     'tgt_max_seq_len' : 123,
     'src_vocab_size' : 10000,
     'tgt_vocab_size' : 8000,
-    'path' : 'C:\My Projects\Transformer from scratch without any help - Vraj\data\English-German.tsv'
+    'path' : 'C:\My Projects\Transformer from scratch without any help - Vraj\data\English-German.tsv',
+    'max_len': 68,
+    'batch_size' : 32
 }
