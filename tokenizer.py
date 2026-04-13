@@ -38,7 +38,7 @@ class Tokenizer():
           self.idx2word[self.next_id] = word
           self.next_id = self.next_id + 1
 
-  def encode(self, sentence, add_sos=False, add_eos=False):
+  def encode_sentence(self, sentence, add_sos=False, add_eos=False):
     words = self.preprocess(sentence)
     encoded_list = []
     for word in words:
@@ -49,7 +49,7 @@ class Tokenizer():
         encoded_list.append(self.EOS_ID)
     return encoded_list
 
-  def decode(self, ids):
+  def decode_sentence(self, ids):
     words = [self.idx2word.get(i, "[UNK]") for i in ids]
     return " ".join(words)
 
