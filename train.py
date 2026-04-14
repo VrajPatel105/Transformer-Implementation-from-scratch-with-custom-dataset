@@ -166,48 +166,41 @@ def evaluate(model, loader, criterion, device, pad_id):
     return total_loss / len(loader)
 
 
-best_val = float('inf')
+def train(model, train_loader, val_loader, criterion, optimizer, device, config):
+    best_val = float('inf')
+    for epoch in range(config['epochs']):
+        model.train()
+        total_loss = 0
+        for batch in train_loader:
+            encoder_input = batch["encoder_input"].to(device)
+            decoder_input = batch["decoder_input"].to(device)
+            label = batch["label"].to(device)
 
-for epoch in range(configurations['epochs']):
-  
-  model.train()   # puts model in training mode (affects dropout, batchnorm)
-  total_loss = 0
-  for batch in train_loader:
-    encoder_input = batch["encoder_input"].to(device)
-    decoder_input = batch["decoder_input"].to(device)
-    label = batch["label"].to(device)
+            src_mask, tgt_mask = make_masks(encoder_input, decoder_input, eng_tok.PAD_ID, device)
+            output = model(encoder_input, decoder_input, src_mask, tgt_mask)
 
-    src_mask, tgt_mask = make_masks(encoder_input, decoder_input, eng_tok.PAD_ID, device)
-    
-    output = model(encoder_input, decoder_input, src_mask, tgt_mask)
-    
-    output = output.view(-1, de_tok.vocab_size())   # (B*T, vocab_size)
-    label  = label.view(-1)                # (B*T,)
-    loss = criterion(output, label)
-    # 5. zero_grad, backward, step
-    optimizer.zero_grad()
+            output = output.view(-1, de_tok.vocab_size())
+            label = label.view(-1)
+            loss = criterion(output, label)
 
-    loss.backward()
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item()
 
-    optimizer.step()
+        train_loss = total_loss / len(train_loader)
+        val_loss = evaluate(model, val_loader, criterion, device, eng_tok.PAD_ID)
+        print(f"epoch {epoch+1:02d} | train {train_loss:.4f} | val {val_loss:.4f}")
 
-    total_loss = total_loss + loss.item()
-    
-  train_loss = total_loss / len(train_loader)
-  val_loss = evaluate(model, val_loader, criterion, device, eng_tok.PAD_ID)
-  
-  print(f"epoch {epoch+1:02d} | train {train_loss:.4f} | val {val_loss:.4f}")
-
-  # save only when val improves → ends up with best weights, not overfit ones
-  if val_loss < best_val:
-    best_val = val_loss
-    torch.save({
-      'model_state_dict': model.state_dict(),
-      'eng_vocab': eng_tok.word2idx,   # verify this attr name in tokenizer.py
-      'de_vocab': de_tok.word2idx,
-      'config': configurations,
-    }, 'transformer_en_de.pt')
-    print(f"  → saved (best val so far)")
+        if val_loss < best_val:
+            best_val = val_loss
+            torch.save({
+                'model_state_dict': model.state_dict(),
+                'eng_vocab': eng_tok.word2idx,
+                'de_vocab': de_tok.word2idx,
+                'config': configurations,
+            }, 'transformer_en_de.pt')
+            print(f"  -> saved (best val so far)")
 
 
 def translate(model, sentence, eng_tok, de_tok, device, max_len):
@@ -247,4 +240,6 @@ def translate(model, sentence, eng_tok, de_tok, device, max_len):
         return de_tok.decode_sentence(ids)
 
 
-print(translate(model, "I am hungry.", eng_tok, de_tok, device, max_len=27))
+if __name__ == "__main__":
+    train(model, train_loader, val_loader, criterion, optimizer, device, configurations)
+    print(translate(model, "I am hungry", eng_tok, de_tok, device, max_len=27))
