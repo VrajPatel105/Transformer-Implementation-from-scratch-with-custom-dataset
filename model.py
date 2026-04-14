@@ -87,17 +87,21 @@ class MultiHeadAttention(nn.Module):
         self.k = self.W_k(k) # -> k @ W_k
         self.v = self.W_v(v) # -> v @ W_v
 
-        self.batch_size, self.seq_len, _ = q.shape  # Extract from input!
+        batch_size = q.size(0)
+        q_len = q.size(1)
+        k_len = k.size(1)
         
         # so till now the shape is batch_size, seq_len, d_model for all q,k,v
         # now we need to convert to another tensor shape which is :
         # batch_size,seq_len,d_model => batch_size,seq_len, num_heads, d_k -> batch_size, num_heads, seq_len,d_k  
-        self.q = self.q.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
-        self.k = self.k.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
-        self.v = self.v.view(self.batch_size, self.seq_len, self.num_heads, self.d_k).transpose(1,2)
+        q = q.view(batch_size, q_len, self.num_heads, self.d_k).transpose(1, 2)
+        k = k.view(batch_size, k_len, self.num_heads, self.d_k).transpose(1, 2)
+        v = v.view(batch_size, k_len, self.num_heads, self.d_k).transpose(1, 2)
 
-        self.attention_scores = self.attention(self.q, self.k, self.v, self.d_k, mask=mask)
-        x = self.W_o(self.attention_scores.transpose(1, 2).contiguous().view(self.batch_size, self.seq_len, self.d_model))
+
+        attention_scores = self.attention(q, k, v, self.d_k, mask=mask)
+        x = self.W_o(attention_scores.transpose(1, 2).contiguous().view(batch_size, q_len, self.d_model))
+
         # summate all here and return 
 
         return x 

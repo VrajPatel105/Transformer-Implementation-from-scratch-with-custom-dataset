@@ -135,11 +135,14 @@ def make_masks(encoder_input, decoder_input, pad_id, device):
   tgt_len = decoder_input.size(1)
   src_mask = (encoder_input != pad_id).unsqueeze(1).unsqueeze(1)
   tgt_pad_mask = (decoder_input != pad_id).unsqueeze(1).unsqueeze(1)
-  causal_mask = torch.tril(torch.ones(tgt_len, tgt_len, device=device)).bool()
-  tgt_mask = (tgt_pad_mask & causal_mask).int()
+  causal_m = torch.tril(torch.ones(tgt_len, tgt_len, device=device)).bool()
+  tgt_mask = (tgt_pad_mask & causal_m).int()
 
   return src_mask.int(), tgt_mask
 
+# just making another casual mask seperate function that will be in help during translate()
+def causal_mask(size, device):
+    return torch.tril(torch.ones(size, size, device=device)).int().unsqueeze(0).unsqueeze(0)
 
 def evaluate(model, loader, criterion, device, pad_id):
     model.eval()
@@ -162,6 +165,8 @@ def evaluate(model, loader, criterion, device, pad_id):
 
     return total_loss / len(loader)
 
+
+best_val = float('inf')
 
 for epoch in range(configurations['epochs']):
   
@@ -192,3 +197,54 @@ for epoch in range(configurations['epochs']):
   val_loss = evaluate(model, val_loader, criterion, device, eng_tok.PAD_ID)
   
   print(f"epoch {epoch+1:02d} | train {train_loss:.4f} | val {val_loss:.4f}")
+
+  # save only when val improves → ends up with best weights, not overfit ones
+  if val_loss < best_val:
+    best_val = val_loss
+    torch.save({
+      'model_state_dict': model.state_dict(),
+      'eng_vocab': eng_tok.word2idx,   # verify this attr name in tokenizer.py
+      'de_vocab': de_tok.word2idx,
+      'config': configurations,
+    }, 'transformer_en_de.pt')
+    print(f"  → saved (best val so far)")
+
+
+def translate(model, sentence, eng_tok, de_tok, device, max_len):
+    model.eval()
+    model.to(device)
+    with torch.no_grad():
+        
+        tokenized_sentence = eng_tok.encode_sentence(sentence, add_sos=True, add_eos=True)
+        assert len(tokenized_sentence) <= max_len, f"too long: {len(tokenized_sentence)} tokens"
+        pad_count = max_len - len(tokenized_sentence)
+        tokenized_sentence = tokenized_sentence + [eng_tok.PAD_ID] * pad_count
+
+        encoder_input = torch.tensor(tokenized_sentence, dtype=torch.long).unsqueeze(0).to(device)
+        src_mask = (encoder_input != eng_tok.PAD_ID).unsqueeze(1).unsqueeze(1).int()
+
+        decoder_input = torch.tensor([[de_tok.SOS_ID]], dtype=torch.long, device=device)
+
+
+        for _ in range(max_len):
+            tgt_mask = causal_mask(decoder_input.size(1), device)
+
+            output = model(encoder_input, decoder_input, src_mask, tgt_mask)
+            last_logits = output[:, -1, :]                         # (1, vocab_size)
+            next_token = torch.argmax(last_logits, dim=-1).unsqueeze(-1)  # (1, 1)
+
+            decoder_input = torch.cat([decoder_input, next_token], dim=1)
+
+            if next_token.item() == de_tok.EOS_ID:
+                break
+
+
+        ids = decoder_input.squeeze(0).tolist()
+        ids = ids[1:]  # drop SOS
+        if ids and ids[-1] == de_tok.EOS_ID:
+            ids = ids[:-1]  # drop EOS if present
+
+        return de_tok.decode_sentence(ids)
+
+
+print(translate(model, "I am hungry.", eng_tok, de_tok, device, max_len=27))
