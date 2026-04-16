@@ -81,15 +81,17 @@ class MultiHeadAttention(nn.Module):
 
         return attention_scores @ v  
 
-
-    def forward(self, q, k, v, mask):
-        self.q = self.W_q(q) # -> q @ W_q
-        self.k = self.W_k(k) # -> k @ W_k
-        self.v = self.W_v(v) # -> v @ W_v
+    # added kv_cache parameter
+    def forward(self, q, k, v, mask, kv_cache=None):
 
         batch_size = q.size(0)
         q_len = q.size(1)
         k_len = k.size(1)
+        
+        self.q = self.W_q(q) # -> q @ W_q
+        self.k = self.W_k(k) # -> k @ W_k
+        self.v = self.W_v(v) # -> v @ W_v
+
         
         # so till now the shape is batch_size, seq_len, d_model for all q,k,v
         # now we need to convert to another tensor shape which is :
@@ -99,12 +101,22 @@ class MultiHeadAttention(nn.Module):
         v = v.view(batch_size, k_len, self.num_heads, self.d_k).transpose(1, 2)
 
 
+        #  KV CACHE: if cache exists, prepend old K/V to new K/V 
+        if kv_cache is not None:
+            old_k, old_v = kv_cache                              # unpack previous step's cached K and V
+            k = torch.cat([old_k, k], dim=2)                    # append new key to cache along seq dimension
+            v = torch.cat([old_v, v], dim=2)                    # append new value to cache along seq dimension
+            # k is now (B, heads, old_len + new_len, d_k) — full history
+
+        # KV CACHE: save current K/V as the new cache for next step 
+        new_cache = (k, v)
+
         attention_scores = self.attention(q, k, v, self.d_k, mask=mask)
+
         x = self.W_o(attention_scores.transpose(1, 2).contiguous().view(batch_size, q_len, self.d_model))
 
-        # summate all here and return 
-
-        return x 
+        # return new_cache as well
+        return x, new_cache
 
 
 # Feed forward class
@@ -218,15 +230,19 @@ class Decoder(nn.Module):
         self.residual_connection = nn.ModuleList([ResidualConnections(self.d_model) for _ in range(3)])
         self.feed_forward = feed_forward
 
-    def forward(self,x, enc_output, src_mask, tgt_mask):
-        sub_layer = self.masked_attention(x,x,x,tgt_mask) 
+    # KV CACHE: added sa_cache and ca_cache params (None during training)
+    def forward(self,x, enc_output, src_mask, tgt_mask, sa_cache=None, ca_cache=None):
+        # KV CACHE: pass and receive self-attention cache
+        sub_layer, new_sa_cache = self.masked_attention(x,x,x,tgt_mask, kv_cache=sa_cache) 
         x = self.residual_connection[0](x, sub_layer)
-        sub_layer = self.cross_attention(x, enc_output, enc_output, src_mask) 
+        # KV CACHE: pass and receive cross-attention cache
+        sub_layer, new_ca_cache = self.cross_attention(x, enc_output, enc_output, src_mask, kv_cache=ca_cache) 
         x = self.residual_connection[1](x, sub_layer)
         sub_layer = self.feed_forward(x)
         x = self.residual_connection[2](x, sub_layer)
 
-        return x
+        # KV CACHE: return both caches alongside output
+        return x, new_sa_cache, new_ca_cache
 
 
 class ProjectionLayer(nn.Module):
@@ -298,7 +314,8 @@ class Transformer(nn.Module):
             src = block(src, src_mask)
         
         for block in self.decoder_blocks:
-            tgt = block(tgt, src, src_mask, tgt_mask)
+            # KV CACHE: during training no cache — ignore returned caches
+            tgt, _, _ = block(tgt, src, src_mask, tgt_mask)
         
         return self.projection_layer(tgt)
     

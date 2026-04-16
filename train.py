@@ -216,24 +216,49 @@ def translate(model, sentence, eng_tok, de_tok, device, max_len):
         encoder_input = torch.tensor(tokenized_sentence, dtype=torch.long).unsqueeze(0).to(device)
         src_mask = (encoder_input != eng_tok.PAD_ID).unsqueeze(1).unsqueeze(1).int()
 
-        decoder_input = torch.tensor([[de_tok.SOS_ID]], dtype=torch.long, device=device)
+        # KV CACHE: run encoder once explicitly instead of through model.forward()
+        src = model.src_pe(model.src_embed(encoder_input))
+        for block in model.encoder_blocks:
+            src = block(src, src_mask)
+        enc_output = src
 
+        # KV CACHE: initialize empty caches per decoder layer
+        num_layers = len(model.decoder_blocks)
+        sa_caches = [None] * num_layers
+        ca_caches = [None] * num_layers
+
+        next_token_id = de_tok.SOS_ID
+        generated_ids = [next_token_id]
 
         for _ in range(max_len):
-            tgt_mask = causal_mask(decoder_input.size(1), device)
+            # KV CACHE: embed only the NEW token, not the full sequence
+            token_tensor = torch.tensor([[next_token_id]], dtype=torch.long, device=device)
 
-            output = model(encoder_input, decoder_input, src_mask, tgt_mask)
-            last_logits = output[:, -1, :]                         # (1, vocab_size)
-            next_token = torch.argmax(last_logits, dim=-1).unsqueeze(-1)  # (1, 1)
+            # KV CACHE: add positional encoding for THIS position only
+            pos = len(generated_ids) - 1
+            tgt = model.tgt_embed(token_tensor)
+            tgt = tgt + model.tgt_pe.pe[:, pos:pos+1, :]
 
-            decoder_input = torch.cat([decoder_input, next_token], dim=1)
+            # KV CACHE: no causal mask needed — Q is length 1, all cached K are past tokens
+            tgt_mask = None
 
-            if next_token.item() == de_tok.EOS_ID:
+            # KV CACHE: run decoder blocks, threading caches through each layer
+            for i, block in enumerate(model.decoder_blocks):
+                tgt, sa_caches[i], ca_caches[i] = block(
+                    tgt, enc_output, src_mask, tgt_mask,
+                    sa_cache=sa_caches[i],
+                    ca_cache=ca_caches[i]
+                )
+
+            logits = model.projection_layer(tgt)
+            next_token_id = torch.argmax(logits[:, -1, :], dim=-1).item()
+
+            generated_ids.append(next_token_id)
+
+            if next_token_id == de_tok.EOS_ID:
                 break
 
-
-        ids = decoder_input.squeeze(0).tolist()
-        ids = ids[1:]  # drop SOS
+        ids = generated_ids[1:]  # drop SOS
         if ids and ids[-1] == de_tok.EOS_ID:
             ids = ids[:-1]  # drop EOS if present
 

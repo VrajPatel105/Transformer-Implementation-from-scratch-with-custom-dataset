@@ -1,0 +1,21 @@
+Alright, here's the intuition — just enough to point you in the right direction without giving it away.
+
+**The problem KV-cache solves:**
+
+During inference, you generate one token at a time. Without KV-cache, every time you generate a new token, you're recomputing K and V for *all previous tokens* from scratch. That's wasteful — those values don't change. Token 1's K and V are the same whether you're on generation step 2 or generation step 50.
+
+**The core idea:**
+
+Store the K and V matrices from previous steps. On each new generation step, you only compute Q, K, V for the *new token*, then concatenate the new K and V onto the cached ones, and run attention over the full cached sequence.
+
+So instead of recomputing everything every step, you're only doing new work for the one new token.
+
+**What changes in your code:**
+
+Your attention mechanism currently expects the full sequence every time. With KV-cache, you need to think about where to store the cache, how to append to it each step, and how your attention function receives the cached K and V versus the new Q.
+
+**The thing to measure:**
+
+Once it works, time your inference with and without cache on a sequence of maybe 50-100 tokens. Log the speedup delta — that number is what the task asks for.
+
+That's all I'll give you. Now go find where K and V are computed in your inference loop and start there.
